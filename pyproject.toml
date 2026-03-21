@@ -1,0 +1,38 @@
+[project]
+name = "bioclip-models"
+version = "0.2.0"
+description = "BioCLIP model preparation pipeline for Observ.ing species identification"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+export = [
+    "torch>=2.1",
+    "open_clip_torch>=2.24",
+    "onnx>=1.15",
+]
+verify = [
+    "onnxruntime>=1.17",
+    "pillow>=10.0",
+]
+dev = [
+    "bioclip-models[export,verify]",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+bioclip-prepare = "bioclip_models.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["bioclip_models*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

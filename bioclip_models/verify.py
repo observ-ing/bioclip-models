@@ -1,0 +1,136 @@
+"""Verification utilities for exported models.
+
+Requires the `verify` extra: pip install -e '.[verify]'
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+
+
+def verify_onnx_model(onnx_path: Path) -> int:
+    """Verify the ONNX vision encoder produces valid output."""
+    import onnxruntime as ort
+
+    print(f"Verifying ONNX model: {onnx_path}")
+
+    session = ort.InferenceSession(str(onnx_path))
+
+    # Check input/output metadata
+    inputs = session.get_inputs()
+    outputs = session.get_outputs()
+    print(f"  Inputs:  {[(i.name, i.shape, i.type) for i in inputs]}")
+    print(f"  Outputs: {[(o.name, o.shape, o.type) for o in outputs]}")
+
+    assert len(inputs) == 1, f"Expected 1 input, got {len(inputs)}"
+    assert inputs[0].name == "pixel_values"
+
+    # Infer embedding dimension from ONNX output metadata
+    embed_dim = outputs[0].shape[1]
+    print(f"  Embedding dimension: {embed_dim}")
+
+    # Run inference with random data
+    dummy = np.random.randn(1, 3, 224, 224).astype(np.float32)
+    result = session.run(None, {"pixel_values": dummy})
+
+    embedding = result[0]
+    print(f"  Output shape: {embedding.shape}")
+    print(f"  Output dtype: {embedding.dtype}")
+    assert embedding.shape == (1, embed_dim), f"Unexpected shape: {embedding.shape}"
+
+    # Check that the output is not all zeros or NaN
+    assert not np.isnan(embedding).any(), "Output contains NaN"
+    assert np.abs(embedding).sum() > 0, "Output is all zeros"
+
+    print("  ONNX verification passed")
+    return embed_dim
+
+
+def verify_embeddings(embeddings_path: Path, labels_path: Path, embed_dim: int | None = None) -> None:
+    """Verify the species embeddings and labels are consistent."""
+    print(f"Verifying embeddings: {embeddings_path}")
+
+    with open(labels_path) as f:
+        labels = json.load(f)
+    num_species = len(labels)
+
+    data = np.fromfile(str(embeddings_path), dtype=np.float32)
+
+    # Infer embedding dimension from file size and label count if not provided
+    if embed_dim is None:
+        assert data.size % num_species == 0, (
+            f"Embeddings size {data.size} is not divisible by species count {num_species}"
+        )
+        embed_dim = data.size // num_species
+        print(f"  Inferred embedding dimension: {embed_dim}")
+
+    expected_size = num_species * embed_dim
+    assert data.size == expected_size, (
+        f"Embeddings size mismatch: {data.size} != {num_species} * {embed_dim} = {expected_size}"
+    )
+
+    embeddings = data.reshape(num_species, embed_dim)
+    print(f"  Shape: {embeddings.shape}")
+    print(f"  Species count: {num_species}")
+
+    # Check L2 normalization (each row should have norm ~1.0)
+    norms = np.linalg.norm(embeddings, axis=1)
+    mean_norm = norms.mean()
+    max_deviation = np.abs(norms - 1.0).max()
+    print(f"  Mean norm: {mean_norm:.6f} (expected ~1.0)")
+    print(f"  Max norm deviation: {max_deviation:.6f}")
+    assert max_deviation < 0.01, f"Embeddings are not L2-normalized (max deviation: {max_deviation})"
+
+    # Check no NaN/Inf
+    assert not np.isnan(embeddings).any(), "Embeddings contain NaN"
+    assert not np.isinf(embeddings).any(), "Embeddings contain Inf"
+
+    # Spot check a few labels
+    for sp in labels[:3]:
+        assert "scientificName" in sp, f"Missing scientificName in label: {sp}"
+    print(f"  Sample labels: {[s['scientificName'] for s in labels[:5]]}")
+
+    print("  Embeddings verification passed")
+
+
+def verify_all(model_dir: Path) -> None:
+    """Run all verification checks on a model directory."""
+    onnx_path = model_dir / "vision_encoder.onnx"
+    embeddings_path = model_dir / "species_embeddings.bin"
+    labels_path = model_dir / "species_labels.json"
+
+    for path in [onnx_path, embeddings_path, labels_path]:
+        if not path.exists():
+            raise FileNotFoundError(f"Missing: {path}")
+
+    embed_dim = verify_onnx_model(onnx_path)
+    verify_embeddings(embeddings_path, labels_path, embed_dim=embed_dim)
+
+    # Quick end-to-end test: embed an image and find top matches
+    print("\nEnd-to-end test:")
+    import onnxruntime as ort
+
+    session = ort.InferenceSession(str(onnx_path))
+    dummy_image = np.random.randn(1, 3, 224, 224).astype(np.float32)
+    image_embedding = session.run(None, {"pixel_values": dummy_image})[0][0]
+
+    # L2 normalize
+    image_embedding = image_embedding / np.linalg.norm(image_embedding)
+
+    with open(labels_path) as f:
+        labels = json.load(f)
+
+    embeddings = np.fromfile(str(embeddings_path), dtype=np.float32).reshape(-1, embed_dim)
+
+    # Cosine similarity
+    similarities = embeddings @ image_embedding
+    top_indices = np.argsort(similarities)[::-1][:5]
+
+    print("  Top 5 matches for random noise (scores should be low and similar):")
+    for idx in top_indices:
+        print(f"    {labels[idx]['scientificName']}: {similarities[idx]:.4f}")
+
+    print("\nAll verifications passed!")
