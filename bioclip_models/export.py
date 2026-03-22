@@ -68,6 +68,7 @@ def generate_species_embeddings(
     species_list: list[dict],
     output_path: Path,
     batch_size: int = 128,
+    device: "torch.device | None" = None,
 ) -> np.ndarray:
     """Generate L2-normalized text embeddings for all species.
 
@@ -76,28 +77,41 @@ def generate_species_embeddings(
 
     The output is a flat binary file of f32 values, shape [N, embed_dim].
     """
-    print(f"Generating embeddings for {len(species_list)} species...")
+    if device is None:
+        device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    print(f"Generating embeddings for {len(species_list)} species on {device}...")
+    model = model.to(device)
 
     all_embeddings = []
 
     for i in range(0, len(species_list), batch_size):
         batch = species_list[i : i + batch_size]
 
-        # Build taxonomic text for each species
-        # BioCLIP was trained with "kingdom, family, genus, species" style text
+        # Build taxonomic text for each species.
+        # BioCLIP was trained with space-separated full 7-rank taxonomic names:
+        # "Kingdom Phylum Class Order Family Genus epithet"
+        # (matching the `taxonomic_name` property in BioCLIP 2's naming_eval.py)
         texts = []
         for sp in batch:
             parts = []
-            if sp.get("kingdom"):
-                parts.append(sp["kingdom"])
-            if sp.get("family"):
-                parts.append(sp["family"])
-            if sp.get("genus"):
-                parts.append(sp["genus"])
-            parts.append(sp["scientificName"])
-            texts.append(", ".join(parts))
+            for rank in ("kingdom", "phylum", "class", "order", "family"):
+                val = sp.get(rank)
+                if val:
+                    parts.append(val.capitalize())
+            genus = sp.get("genus") or ""
+            if genus:
+                parts.append(genus.capitalize())
+            # Extract species epithet from scientificName (strip genus prefix)
+            scientific = sp["scientificName"]
+            if genus and scientific.lower().startswith(genus.lower() + " "):
+                epithet = scientific[len(genus) + 1:].strip().lower()
+            else:
+                epithet = scientific.lower()
+            if epithet:
+                parts.append(epithet)
+            texts.append(" ".join(parts))
 
-        tokens = tokenizer(texts)
+        tokens = tokenizer(texts).to(device)
 
         with torch.no_grad():
             features = model.encode_text(tokens)
