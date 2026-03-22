@@ -17,8 +17,12 @@ verify = [
     "onnxruntime>=1.17",
     "pillow>=10.0",
 ]
+eval = [
+    "onnxruntime>=1.17",
+    "pillow>=10.0",
+]
 dev = [
-    "bioclip-models[export,verify]",
+    "bioclip-models[export,verify,eval]",
     "ruff>=0.4",
 ]
 

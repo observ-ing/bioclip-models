@@ -75,7 +75,45 @@ def cmd_verify(args: argparse.Namespace) -> None:
     verify_all(args.model_dir)
 
 
+def cmd_fetch_eval_data(args: argparse.Namespace) -> None:
+    """Fetch iNaturalist eval snapshot."""
+    from .inat import build_eval_dataset, fetch_top_species, save_snapshot
+
+    output: Path = args.output
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    species_names = fetch_top_species(args.species_count)
+    records = build_eval_dataset(species_names, args.obs_per_species)
+    save_snapshot(species_names, records, output)
+
+
+def cmd_eval(args: argparse.Namespace) -> None:
+    """Evaluate model accuracy against an iNaturalist snapshot."""
+    from .eval import (
+        evaluate_snapshot,
+        load_model_artifacts,
+        print_results,
+        save_results,
+    )
+    from .inat import load_snapshot
+
+    snapshot = load_snapshot(args.snapshot)
+    records = snapshot["observations"]
+    print(
+        f"Snapshot: {len(snapshot['species'])} species, "
+        f"{len(records)} observations"
+    )
+
+    session, embeddings, labels_lookup = load_model_artifacts(args.model_dir)
+    results = evaluate_snapshot(records, session, embeddings, labels_lookup, args.top_k)
+    print_results(results)
+
+    if args.output:
+        save_results(results, args.output)
+
+
 def main() -> None:
+    """Entry point for the bioclip-prepare CLI."""
     parser = argparse.ArgumentParser(
         prog="bioclip-prepare",
         description="BioCLIP 2.5 model preparation pipeline for Observ.ing",
@@ -149,9 +187,65 @@ def main() -> None:
     p_verify.add_argument(
         "model_dir",
         type=Path,
-        help="Directory containing vision_encoder.onnx, species_embeddings.bin, species_labels.json",
+        help="Directory with vision_encoder.onnx, species_embeddings.bin, species_labels.json",
     )
     p_verify.set_defaults(func=cmd_verify)
+
+    # --- fetch-eval-data ---
+    p_fetch = subparsers.add_parser(
+        "fetch-eval-data",
+        help="Fetch iNaturalist eval snapshot (CC0 research-grade observations)",
+    )
+    p_fetch.add_argument(
+        "--species-count",
+        type=int,
+        default=100,
+        help="Top-N most observed iNat species to include (default: 100)",
+    )
+    p_fetch.add_argument(
+        "--obs-per-species",
+        type=int,
+        default=10,
+        help="Max observations per species (default: 10)",
+    )
+    p_fetch.add_argument(
+        "--output",
+        type=Path,
+        default=Path("eval_data/snapshot.json"),
+        help="Output snapshot path (default: eval_data/snapshot.json)",
+    )
+    p_fetch.set_defaults(func=cmd_fetch_eval_data)
+
+    # --- eval ---
+    p_eval = subparsers.add_parser(
+        "eval",
+        help="Evaluate model top-1/top-5 accuracy against an iNat snapshot",
+    )
+    p_eval.add_argument(
+        "--model-dir",
+        type=Path,
+        default=Path("output"),
+        help="Directory with model artifacts (default: output/)",
+    )
+    p_eval.add_argument(
+        "--snapshot",
+        type=Path,
+        required=True,
+        help="Snapshot JSON from fetch-eval-data",
+    )
+    p_eval.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="Top-K for accuracy metric (default: 5)",
+    )
+    p_eval.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to save results JSON",
+    )
+    p_eval.set_defaults(func=cmd_eval)
 
     args = parser.parse_args()
     try:
