@@ -26,6 +26,16 @@ def normalize_name(name: str) -> str:
     return name.lower().strip()
 
 
+def _species_name(name: str) -> str:
+    """Return the species-level binomial from a scientific name.
+
+    Drops any subspecies/variety epithet beyond the first two words,
+    e.g. 'Anas platyrhynchos domesticus' -> 'Anas platyrhynchos'.
+    """
+    parts = name.strip().split()
+    return " ".join(parts[:2]) if len(parts) > 2 else name
+
+
 def load_model_artifacts(model_dir: Path) -> tuple["ort.InferenceSession", np.ndarray, dict]:
     """Load ONNX session, embeddings, and labels lookup from a model directory.
 
@@ -141,8 +151,12 @@ def evaluate_snapshot(
         image_url = rec["image_url"]
 
         if inat_name not in species_stats:
-            matched = normalize_name(inat_name) in labels_lookup
+            norm = normalize_name(inat_name)
+            # Fall back to species-level binomial for subspecies names
+            canonical_key = norm if norm in labels_lookup else normalize_name(_species_name(inat_name))
+            matched = canonical_key in labels_lookup
             species_stats[inat_name] = {
+                "_canonical_key": canonical_key if matched else None,
                 "in_list": matched,
                 "n": 0,
                 "top1": 0,
@@ -167,7 +181,7 @@ def evaluate_snapshot(
             error_count += 1
             continue
 
-        canonical = labels_lookup[normalize_name(inat_name)]
+        canonical = labels_lookup[stats["_canonical_key"]]
         if predictions[0] == canonical:
             stats["top1"] += 1
             top1_correct += 1
