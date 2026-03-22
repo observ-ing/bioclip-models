@@ -1,4 +1,4 @@
-"""iNaturalist API client for building evaluation datasets.
+"""iNaturalist API client for building species lists and evaluation datasets.
 
 Fetches the top-N most observed species and research-grade CC0 observations
 for use as a reproducible evaluation snapshot.
@@ -15,13 +15,63 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 INAT_API = "https://api.inaturalist.org/v1"
+INAT_API_V2 = "https://api.inaturalist.org/v2"
+
+# Target ranks for species taxonomy (iNat rank field values)
+_TAXONOMY_RANKS = ("kingdom", "phylum", "class", "order", "family", "genus")
+
+# Batch size for /v2/taxa ID lookups (iNat v2 taxa endpoint limit)
+_TAXA_BATCH_SIZE = 30
 
 
 def _get(url: str, params: dict) -> dict:
     full_url = f"{url}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(full_url, headers={"User-Agent": "bioclip-models/eval"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.loads(resp.read())
+        except (urllib.error.URLError, OSError) as e:
+            if attempt == 2:
+                raise
+            print(f"  Warning: request error (attempt {attempt + 1}/3): {e}, retrying...")
+            time.sleep(5)
+    raise RuntimeError("unreachable")
+
+
+def _fetch_taxa_batch(ids: list[int]) -> dict[int, dict]:
+    """Batch-fetch taxa by ID from iNat v2 API.
+
+    Returns {id: {"name": str, "rank": str}} for all requested IDs.
+    Batches requests at _TAXA_BATCH_SIZE IDs per call, sleeping 1s between batches.
+    """
+    result: dict[int, dict] = {}
+
+    for i in range(0, len(ids), _TAXA_BATCH_SIZE):
+        batch = ids[i: i + _TAXA_BATCH_SIZE]
+        id_str = ",".join(str(x) for x in batch)
+        url = f"{INAT_API_V2}/taxa/{id_str}?fields=id,name,rank"
+        req = urllib.request.Request(url, headers={"User-Agent": "bioclip-models/eval"})
+
+        # Retry up to 3 times on transient network errors
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    data = json.loads(resp.read())
+                break
+            except (urllib.error.URLError, OSError) as e:
+                if attempt == 2:
+                    raise
+                print(f"  Warning: taxa batch error (attempt {attempt + 1}/3): {e}, retrying...")
+                time.sleep(5)
+
+        for taxon in data.get("results", []):
+            result[taxon["id"]] = {"name": taxon["name"], "rank": taxon["rank"]}
+
+        if i + _TAXA_BATCH_SIZE < len(ids):
+            time.sleep(1)
+
+    return result
 
 
 def fetch_top_species(count: int) -> list[str]:
@@ -29,7 +79,7 @@ def fetch_top_species(count: int) -> list[str]:
 
     Returns a list of scientific names ordered by observation count descending.
     """
-    print(f"Fetching top {count} most-observed species from iNaturalist...")
+    print(f"Fetching top {count} most-observed CC0 species from iNaturalist...")
     names: list[str] = []
     page = 1
     per_page = min(500, count)
@@ -61,10 +111,99 @@ def fetch_top_species(count: int) -> list[str]:
         if len(results) < per_page:
             break
         page += 1
-        time.sleep(0.5)
+        time.sleep(1)
 
     print(f"  Fetched {len(names)} species")
     return names[:count]
+
+
+def build_species_list_inat(count: int) -> list[dict]:
+    """Build a species list ordered by iNat observation frequency with full taxonomy.
+
+    Steps:
+    1. Fetch top N species with ancestor_ids from /observations/species_counts
+       (research-grade, all licenses — no CC0 filter for frequency ranking)
+    2. Collect all unique ancestor IDs across all species
+    3. Batch-fetch ancestor taxa → {id: {name, rank}} via /v2/taxa
+    4. For each species, resolve kingdom/phylum/class/order/family/genus from ancestor chain
+    5. Return list[dict] in observation-frequency order
+
+    Output format matches species_labels.json (compatible with generate_species_embeddings).
+    """
+    print(f"Fetching top {count} most-observed species from iNaturalist...")
+    taxa: list[dict] = []  # raw iNat taxon objects
+    page = 1
+    per_page = min(500, count)
+
+    while len(taxa) < count:
+        data = _get(
+            f"{INAT_API}/observations/species_counts",
+            {
+                "quality_grade": "research",
+                "rank": "species",
+                "per_page": per_page,
+                "page": page,
+            },
+        )
+        results = data.get("results", [])
+        if not results:
+            break
+
+        for r in results:
+            taxon = r.get("taxon", {})
+            if taxon.get("name"):
+                taxa.append(taxon)
+            if len(taxa) >= count:
+                break
+
+        print(f"  {len(taxa)}/{count} species fetched...")
+        if len(results) < per_page:
+            break
+        page += 1
+        time.sleep(1)
+
+    taxa = taxa[:count]
+    print(f"  Fetched {len(taxa)} species")
+
+    # Collect all unique ancestor IDs (excluding the species taxon ID itself)
+    all_ancestor_ids: set[int] = set()
+    for taxon in taxa:
+        species_id = taxon.get("id")
+        for aid in taxon.get("ancestor_ids", []):
+            if aid != species_id:
+                all_ancestor_ids.add(aid)
+
+    print(f"Resolving {len(all_ancestor_ids)} unique ancestor taxa...")
+    ancestor_cache = _fetch_taxa_batch(sorted(all_ancestor_ids))
+    print(f"  Resolved {len(ancestor_cache)} ancestors")
+
+    # Build species dicts with resolved taxonomy
+    species_list: list[dict] = []
+    for taxon in taxa:
+        species_id = taxon.get("id")
+        taxonomy: dict[str, str | None] = {rank: None for rank in _TAXONOMY_RANKS}
+
+        for aid in taxon.get("ancestor_ids", []):
+            if aid == species_id:
+                continue
+            ancestor = ancestor_cache.get(aid)
+            if ancestor and ancestor["rank"] in taxonomy:
+                taxonomy[ancestor["rank"]] = ancestor["name"]
+
+        species_list.append({
+            "scientificName": taxon["name"],
+            "commonName": None,
+            "kingdom": taxonomy["kingdom"],
+            "phylum": taxonomy["phylum"],
+            "class": taxonomy["class"],
+            "order": taxonomy["order"],
+            "family": taxonomy["family"],
+            "genus": taxonomy["genus"],
+        })
+
+    matched = sum(1 for sp in species_list if sp["kingdom"] is not None)
+    print(f"  Full taxonomy resolved for {matched}/{len(species_list)} species")
+    return species_list
 
 
 def fetch_observations(taxon_name: str, count: int) -> list[dict]:
@@ -121,7 +260,7 @@ def fetch_observations(taxon_name: str, count: int) -> list[dict]:
         if len(results) < 200:
             break
         page += 1
-        time.sleep(0.5)
+        time.sleep(1)
 
     return records
 
@@ -138,7 +277,7 @@ def build_eval_dataset(species_names: list[str], obs_per_species: int) -> list[d
             if r["id"] not in seen_ids:
                 seen_ids.add(r["id"])
                 all_records.append(r)
-        time.sleep(0.5)
+        time.sleep(1)
 
     return all_records
 

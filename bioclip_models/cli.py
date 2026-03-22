@@ -7,10 +7,19 @@ import sys
 from pathlib import Path
 
 
+def _build_species_list(args: argparse.Namespace) -> list[dict]:
+    """Build species list according to --strategy."""
+    if args.strategy == "inat-ordered":
+        from .inat import build_species_list_inat
+        return build_species_list_inat(args.species_count)
+    from .gbif import build_species_list
+    return build_species_list(total_count=args.species_count)
+
+
 def cmd_prepare(args: argparse.Namespace) -> None:
     """Run the full model preparation pipeline."""
     from .export import export_vision_encoder, generate_species_embeddings, load_bioclip
-    from .gbif import build_species_list, load_species_list, save_species_list
+    from .gbif import load_species_list, save_species_list
     from .verify import verify_all
 
     output_dir: Path = args.output_dir
@@ -25,7 +34,7 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         print(f"Using existing species list: {labels_path}")
         species_list = load_species_list(labels_path)
     else:
-        species_list = build_species_list(total_count=args.species_count)
+        species_list = _build_species_list(args)
         save_species_list(species_list, labels_path)
 
     print(f"Species count: {len(species_list)}")
@@ -56,15 +65,13 @@ def cmd_prepare(args: argparse.Namespace) -> None:
 
 
 def cmd_labels(args: argparse.Namespace) -> None:
-    """Build species label set from GBIF (without model export)."""
-    from .gbif import build_species_list, save_species_list
+    """Build species label set (without model export)."""
+    from .gbif import save_species_list
 
     output_path: Path = args.output
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    species_list = build_species_list(
-        total_count=args.species_count,
-    )
+    species_list = _build_species_list(args)
     save_species_list(species_list, output_path)
 
 
@@ -158,6 +165,12 @@ def main() -> None:
         action="store_true",
         help="Re-fetch species list even if species_labels.json exists",
     )
+    p_prepare.add_argument(
+        "--strategy",
+        choices=["gbif-random", "inat-ordered"],
+        default="gbif-random",
+        help="Species list strategy (default: gbif-random)",
+    )
     p_prepare.set_defaults(func=cmd_prepare)
 
     # --- labels ---
@@ -176,6 +189,12 @@ def main() -> None:
         type=int,
         default=100_000,
         help="Target number of species",
+    )
+    p_labels.add_argument(
+        "--strategy",
+        choices=["gbif-random", "inat-ordered"],
+        default="gbif-random",
+        help="Species list strategy (default: gbif-random)",
     )
     p_labels.set_defaults(func=cmd_labels)
 
