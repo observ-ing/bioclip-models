@@ -55,7 +55,19 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     embeddings_path = output_dir / "species_embeddings.bin"
     generate_species_embeddings(model, tokenizer, species_list, embeddings_path)
 
-    # Step 5: Verify
+    # Step 5: (optional) Geo index
+    if args.range_maps:
+        from .geo import build_geo_index
+
+        geo_index_path = output_dir / "species_geo_index.bin"
+        build_geo_index(
+            range_maps_path=args.range_maps,
+            species_labels_path=labels_path,
+            output_path=geo_index_path,
+            resolution=args.h3_resolution,
+        )
+
+    # Step 6: Verify
     if not args.skip_verify:
         print("\n--- Verification ---")
         verify_all(output_dir)
@@ -64,6 +76,25 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     for f in sorted(output_dir.iterdir()):
         size_mb = f.stat().st_size / (1024 * 1024)
         print(f"  {f.name}: {size_mb:.1f} MB")
+
+
+def cmd_geo(args: argparse.Namespace) -> None:
+    """Build the geographic range index as a standalone step."""
+    from .geo import build_geo_index
+
+    build_geo_index(
+        range_maps_path=args.range_maps,
+        species_labels_path=args.species_labels,
+        output_path=args.output,
+        resolution=args.h3_resolution,
+    )
+
+
+def cmd_download_range_maps(args: argparse.Namespace) -> None:
+    """Download iNaturalist Open Range Map shards from their public S3 bucket."""
+    from .geo import download_range_maps
+
+    download_range_maps(args.dest)
 
 
 def cmd_labels(args: argparse.Namespace) -> None:
@@ -173,7 +204,64 @@ def main() -> None:
         default="gbif-random",
         help="Species list strategy (default: gbif-random)",
     )
+    p_prepare.add_argument(
+        "--range-maps",
+        type=Path,
+        default=None,
+        help="iNat Open Range Map file (gpkg/parquet/geojson). If set, also "
+        "builds species_geo_index.bin for geo-prior reranking.",
+    )
+    p_prepare.add_argument(
+        "--h3-resolution",
+        type=int,
+        default=4,
+        help="H3 resolution for the geo index (default: 4, ~26km hex edges)",
+    )
     p_prepare.set_defaults(func=cmd_prepare)
+
+    # --- geo ---
+    p_geo = subparsers.add_parser(
+        "geo",
+        help="Build species_geo_index.bin from an iNat range map file",
+    )
+    p_geo.add_argument(
+        "--range-maps",
+        type=Path,
+        required=True,
+        help="iNat Open Range Map file (gpkg/parquet/geojson)",
+    )
+    p_geo.add_argument(
+        "--species-labels",
+        type=Path,
+        default=Path("output/species_labels.json"),
+        help="Path to species_labels.json (default: output/species_labels.json)",
+    )
+    p_geo.add_argument(
+        "--output",
+        type=Path,
+        default=Path("output/species_geo_index.bin"),
+        help="Output binary path (default: output/species_geo_index.bin)",
+    )
+    p_geo.add_argument(
+        "--h3-resolution",
+        type=int,
+        default=4,
+        help="H3 resolution (default: 4, ~26km hex edges)",
+    )
+    p_geo.set_defaults(func=cmd_geo)
+
+    # --- download-range-maps ---
+    p_dl = subparsers.add_parser(
+        "download-range-maps",
+        help="Download iNat Open Range Map shards from S3 (CC-BY-4.0, ~7 GB)",
+    )
+    p_dl.add_argument(
+        "--dest",
+        type=Path,
+        default=Path("cache/range_maps"),
+        help="Destination directory (default: cache/range_maps)",
+    )
+    p_dl.set_defaults(func=cmd_download_range_maps)
 
     # --- labels ---
     p_labels = subparsers.add_parser(

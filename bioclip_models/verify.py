@@ -98,11 +98,79 @@ def verify_embeddings(embeddings_path: Path, labels_path: Path, embed_dim: int |
     print("  Embeddings verification passed")
 
 
+def verify_geo_index(geo_index_path: Path, labels_path: Path) -> None:
+    """Sanity-check the species geo index binary.
+
+    Verifies the header, that cells are sorted, that offsets are monotonic and
+    terminate at num_entries, and that every species index is in-bounds for
+    the label set.
+    """
+    import struct
+
+    print(f"Verifying geo index: {geo_index_path}")
+
+    with open(labels_path) as f:
+        num_species = len(json.load(f))
+
+    data = geo_index_path.read_bytes()
+    if len(data) < 32:
+        raise ValueError(f"Geo index too short ({len(data)} bytes) to contain header")
+
+    magic = data[:4]
+    if magic != b"OGI1":
+        raise ValueError(f"Bad magic: expected b'OGI1', got {magic!r}")
+
+    version, hdr_species, h3_res, num_cells, num_entries, _, _ = struct.unpack(
+        "<IIIIIII", data[4:32]
+    )
+    print(f"  version={version} h3_res={h3_res} num_cells={num_cells} num_entries={num_entries}")
+
+    if version != 1:
+        raise ValueError(f"Unsupported geo index version: {version}")
+    if hdr_species != num_species:
+        raise ValueError(
+            f"Geo index num_species ({hdr_species}) does not match labels "
+            f"({num_species}) — index is stale"
+        )
+
+    expected_size = 32 + num_cells * 8 + (num_cells + 1) * 4 + num_entries * 4
+    if len(data) != expected_size:
+        raise ValueError(
+            f"Geo index size mismatch: expected {expected_size}, got {len(data)}"
+        )
+
+    off = 32
+    cells = np.frombuffer(data, dtype=np.uint64, count=num_cells, offset=off)
+    off += num_cells * 8
+    offsets = np.frombuffer(data, dtype=np.uint32, count=num_cells + 1, offset=off)
+    off += (num_cells + 1) * 4
+    species_ids = np.frombuffer(data, dtype=np.uint32, count=num_entries, offset=off)
+
+    if num_cells > 1:
+        assert np.all(np.diff(cells.astype(np.int64)) > 0), "cells[] is not strictly ascending"
+    assert offsets[0] == 0, "offsets[0] must be 0"
+    assert offsets[-1] == num_entries, (
+        f"offsets[-1] ({offsets[-1]}) != num_entries ({num_entries})"
+    )
+    assert np.all(np.diff(offsets.astype(np.int64)) >= 0), "offsets must be monotonic"
+    if num_entries:
+        assert species_ids.max() < num_species, (
+            f"species_ids contains out-of-range value {species_ids.max()} "
+            f">= num_species {num_species}"
+        )
+
+    avg = num_entries / num_cells if num_cells else 0
+    print(f"  avg species per cell: {avg:.0f}; max per cell: "
+          f"{int(np.diff(offsets).max()) if num_cells else 0}")
+    print("  Geo index verification passed")
+
+
 def verify_all(model_dir: Path) -> None:
     """Run all verification checks on a model directory."""
     onnx_path = model_dir / "vision_encoder.onnx"
     embeddings_path = model_dir / "species_embeddings.bin"
     labels_path = model_dir / "species_labels.json"
+    geo_index_path = model_dir / "species_geo_index.bin"
 
     for path in [onnx_path, embeddings_path, labels_path]:
         if not path.exists():
@@ -110,6 +178,11 @@ def verify_all(model_dir: Path) -> None:
 
     embed_dim = verify_onnx_model(onnx_path)
     verify_embeddings(embeddings_path, labels_path, embed_dim=embed_dim)
+
+    if geo_index_path.exists():
+        verify_geo_index(geo_index_path, labels_path)
+    else:
+        print(f"Geo index not present ({geo_index_path.name}) — skipping")
 
     # Quick end-to-end test: embed an image and find top matches
     print("\nEnd-to-end test:")
