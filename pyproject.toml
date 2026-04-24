@@ -24,6 +24,7 @@ eval = [
 ]
 dev = [
     "bioclip-models[export,verify,eval]",
+    "pytest>=8.0",
     "ruff>=0.4",
     "pyright>=1.1.400",
 ]
