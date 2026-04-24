@@ -22,8 +22,13 @@ eval = [
     "onnxruntime>=1.17",
     "pillow>=10.0",
 ]
+geo = [
+    "geopandas>=1.0",
+    "h3>=4.1",
+    "shapely>=2.0",
+]
 dev = [
-    "bioclip-models[export,verify,eval]",
+    "bioclip-models[export,verify,eval,geo]",
     "pytest>=8.0",
     "ruff>=0.4",
     "pyright>=1.1.400",
