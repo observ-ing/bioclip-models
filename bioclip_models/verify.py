@@ -110,7 +110,10 @@ def verify_geo_index(geo_index_path: Path, labels_path: Path) -> None:
     print(f"Verifying geo index: {geo_index_path}")
 
     with open(labels_path) as f:
-        num_species = len(json.load(f))
+        raw_labels = json.load(f)
+    # Validate at the boundary, same pattern as verify_embeddings.
+    labels = [SpeciesRecord.model_validate(item) for item in raw_labels]
+    num_species = len(labels)
 
     data = geo_index_path.read_bytes()
     if len(data) < 32:

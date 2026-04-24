@@ -328,11 +328,14 @@ def build_geo_index(
         output_path: destination for species_geo_index.bin.
         resolution: H3 resolution (default 4, ~26km hex edges).
     """
+    from .schema import SpeciesRecord
+
     print(f"Loading species labels from {species_labels_path}")
     with open(species_labels_path) as f:
-        labels = json.load(f)
+        raw_labels = json.load(f)
+    labels = [SpeciesRecord.model_validate(item) for item in raw_labels]
     num_species = len(labels)
-    name_to_idx = {label["scientificName"]: i for i, label in enumerate(labels)}
+    name_to_idx = {label.scientific_name: i for i, label in enumerate(labels)}
     print(f"  {num_species} species in label set")
 
     print(f"Rasterizing range maps under {range_maps_path} to H3-{resolution} cells")
