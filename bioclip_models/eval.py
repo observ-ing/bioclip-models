@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from .schema import EvalObservation, SpeciesRecord
+
 if TYPE_CHECKING:
     import onnxruntime as ort
 
@@ -57,7 +59,8 @@ def load_model_artifacts(model_dir: Path) -> tuple["ort.InferenceSession", np.nd
     session = ort.InferenceSession(str(onnx_path))
 
     with open(labels_path, encoding="utf-8") as f:
-        labels = json.load(f)
+        raw_labels = json.load(f)
+    labels = [SpeciesRecord.model_validate(item) for item in raw_labels]
     num_species = len(labels)
 
     data = np.fromfile(str(embeddings_path), dtype=np.float32)
@@ -67,7 +70,7 @@ def load_model_artifacts(model_dir: Path) -> tuple["ort.InferenceSession", np.nd
     embed_dim = data.size // num_species
     embeddings = data.reshape(num_species, embed_dim)
 
-    labels_lookup = {normalize_name(sp["scientificName"]): sp["scientificName"] for sp in labels}
+    labels_lookup = {normalize_name(sp.scientific_name): sp.scientific_name for sp in labels}
 
     print(
         f"Loaded model: {num_species} species, embed_dim={embed_dim}, "
@@ -125,7 +128,7 @@ def run_inference(
 
 
 def evaluate_snapshot(
-    records: list[dict],
+    records: list[EvalObservation],
     session: "ort.InferenceSession",
     embeddings: np.ndarray,
     labels_lookup: dict,
@@ -147,8 +150,8 @@ def evaluate_snapshot(
     topk_correct = 0
 
     for rec in records:
-        inat_name = rec["inat_taxon_name"]
-        image_url = rec["image_url"]
+        inat_name = rec.inat_taxon_name
+        image_url = rec.image_url
 
         if inat_name not in species_stats:
             norm = normalize_name(inat_name)

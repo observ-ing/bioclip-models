@@ -10,6 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .schema import SpeciesRecord
+
 
 def verify_onnx_model(onnx_path: Path) -> int:
     """Verify the ONNX vision encoder produces valid output."""
@@ -54,7 +56,8 @@ def verify_embeddings(embeddings_path: Path, labels_path: Path, embed_dim: int |
     print(f"Verifying embeddings: {embeddings_path}")
 
     with open(labels_path) as f:
-        labels = json.load(f)
+        raw_labels = json.load(f)
+    labels = [SpeciesRecord.model_validate(item) for item in raw_labels]
     num_species = len(labels)
 
     data = np.fromfile(str(embeddings_path), dtype=np.float32)
@@ -88,10 +91,8 @@ def verify_embeddings(embeddings_path: Path, labels_path: Path, embed_dim: int |
     assert not np.isnan(embeddings).any(), "Embeddings contain NaN"
     assert not np.isinf(embeddings).any(), "Embeddings contain Inf"
 
-    # Spot check a few labels
-    for sp in labels[:3]:
-        assert "scientificName" in sp, f"Missing scientificName in label: {sp}"
-    print(f"  Sample labels: {[s['scientificName'] for s in labels[:5]]}")
+    # SpeciesRecord validation above already enforced scientific_name presence.
+    print(f"  Sample labels: {[s.scientific_name for s in labels[:5]]}")
 
     print("  Embeddings verification passed")
 
@@ -121,7 +122,8 @@ def verify_all(model_dir: Path) -> None:
     image_embedding = image_embedding / np.linalg.norm(image_embedding)
 
     with open(labels_path) as f:
-        labels = json.load(f)
+        raw_labels = json.load(f)
+    labels = [SpeciesRecord.model_validate(item) for item in raw_labels]
 
     embeddings = np.fromfile(str(embeddings_path), dtype=np.float32).reshape(-1, embed_dim)
 
@@ -131,6 +133,6 @@ def verify_all(model_dir: Path) -> None:
 
     print("  Top 5 matches for random noise (scores should be low and similar):")
     for idx in top_indices:
-        print(f"    {labels[idx]['scientificName']}: {similarities[idx]:.4f}")
+        print(f"    {labels[idx].scientific_name}: {similarities[idx]:.4f}")
 
     print("\nAll verifications passed!")

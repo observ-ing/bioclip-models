@@ -10,6 +10,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from .schema import SpeciesRecord
+
 
 def load_bioclip():
     """Load BioCLIP 2.5 (ViT-H/14) model and tokenizer from HuggingFace via open_clip."""
@@ -65,7 +67,7 @@ def export_vision_encoder(model, output_path: Path) -> None:
 def generate_species_embeddings(
     model,
     tokenizer,
-    species_list: list[dict],
+    species_list: list[SpeciesRecord],
     output_path: Path,
     batch_size: int = 128,
     device: "torch.device | None" = None,
@@ -94,15 +96,14 @@ def generate_species_embeddings(
         texts = []
         for sp in batch:
             parts = []
-            for rank in ("kingdom", "phylum", "class", "order", "family"):
-                val = sp.get(rank)
-                if val:
-                    parts.append(val.capitalize())
-            genus = sp.get("genus") or ""
+            for rank_val in (sp.kingdom, sp.phylum, sp.class_, sp.order, sp.family):
+                if rank_val:
+                    parts.append(rank_val.capitalize())
+            genus = sp.genus or ""
             if genus:
                 parts.append(genus.capitalize())
-            # Extract species epithet from scientificName (strip genus prefix)
-            scientific = sp["scientificName"]
+            # Extract species epithet from scientific_name (strip genus prefix)
+            scientific = sp.scientific_name
             if genus and scientific.lower().startswith(genus.lower() + " "):
                 epithet = scientific[len(genus) + 1:].strip().lower()
             else:

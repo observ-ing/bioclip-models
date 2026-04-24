@@ -5,6 +5,7 @@ description = "BioCLIP model preparation pipeline for Observ.ing species identif
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
+    "pydantic>=2.5",
 ]
 
 [project.optional-dependencies]
