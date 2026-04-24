@@ -31,9 +31,5 @@ jobs:
       - name: Pyright strict
         run: pyright bioclip_models/
 
-      - name: Import smoke test
-        run: |
-          python -c "
-          from bioclip_models import cli, eval, export, gbif, inat, schema, verify
-          print('all modules import')
-          "
+      - name: Pytest
+        run: pytest tests/
