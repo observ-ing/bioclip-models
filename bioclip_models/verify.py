@@ -34,11 +34,12 @@ def verify_onnx_model(onnx_path: Path) -> int:
     embed_dim = outputs[0].shape[1]
     print(f"  Embedding dimension: {embed_dim}")
 
-    # Run inference with random data
+    # Run inference with random data. ONNX run() is typed as a union with
+    # SparseTensor/OrtValue; for this model we always get a plain ndarray.
     dummy = np.random.randn(1, 3, 224, 224).astype(np.float32)
     result = session.run(None, {"pixel_values": dummy})
 
-    embedding = result[0]
+    embedding = np.asarray(result[0])
     print(f"  Output shape: {embedding.shape}")
     print(f"  Output dtype: {embedding.dtype}")
     assert embedding.shape == (1, embed_dim), f"Unexpected shape: {embedding.shape}"
@@ -116,7 +117,7 @@ def verify_all(model_dir: Path) -> None:
 
     session = ort.InferenceSession(str(onnx_path))
     dummy_image = np.random.randn(1, 3, 224, 224).astype(np.float32)
-    image_embedding = session.run(None, {"pixel_values": dummy_image})[0][0]
+    image_embedding = np.asarray(session.run(None, {"pixel_values": dummy_image})[0])[0]
 
     # L2 normalize
     image_embedding = image_embedding / np.linalg.norm(image_embedding)

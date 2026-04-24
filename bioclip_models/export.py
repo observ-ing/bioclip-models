@@ -49,7 +49,7 @@ def export_vision_encoder(model, output_path: Path) -> None:
     print(f"Exporting vision encoder to {output_path}...")
     torch.onnx.export(
         vision,
-        dummy,
+        (dummy,),
         str(output_path),
         input_names=["pixel_values"],
         output_names=["image_embeds"],
@@ -70,7 +70,7 @@ def generate_species_embeddings(
     species_list: list[SpeciesRecord],
     output_path: Path,
     batch_size: int = 128,
-    device: "torch.device | None" = None,
+    device: "torch.device | None" = None,  # pyright: ignore[reportPrivateImportUsage]
 ) -> np.ndarray:
     """Generate L2-normalized text embeddings for all species.
 
@@ -80,7 +80,7 @@ def generate_species_embeddings(
     The output is a flat binary file of f32 values, shape [N, embed_dim].
     """
     if device is None:
-        device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+        device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")  # pyright: ignore[reportPrivateImportUsage]
     print(f"Generating embeddings for {len(species_list)} species on {device}...")
     model = model.to(device)
 

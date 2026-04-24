@@ -9,7 +9,7 @@ import json
 import urllib.request
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -38,7 +38,9 @@ def _species_name(name: str) -> str:
     return " ".join(parts[:2]) if len(parts) > 2 else name
 
 
-def load_model_artifacts(model_dir: Path) -> tuple["ort.InferenceSession", np.ndarray, dict]:
+def load_model_artifacts(
+    model_dir: Path,
+) -> tuple["ort.InferenceSession", np.ndarray, dict[str, str]]:
     """Load ONNX session, embeddings, and labels lookup from a model directory.
 
     Returns:
@@ -107,11 +109,12 @@ def run_inference(
     session: "ort.InferenceSession",
     image_tensor: np.ndarray,
     embeddings: np.ndarray,
-    labels_lookup: dict,
+    labels_lookup: dict[str, str],
     top_k: int = 5,
 ) -> list[str]:
     """Run ONNX inference and return top-k scientific names."""
-    image_embeds = session.run(None, {"pixel_values": image_tensor})[0][0]
+    # ONNX run() is typed as a union; narrow to ndarray for the known output.
+    image_embeds = np.asarray(session.run(None, {"pixel_values": image_tensor})[0])[0]
 
     # L2 normalize
     norm = np.linalg.norm(image_embeds)
@@ -131,9 +134,9 @@ def evaluate_snapshot(
     records: list[EvalObservation],
     session: "ort.InferenceSession",
     embeddings: np.ndarray,
-    labels_lookup: dict,
+    labels_lookup: dict[str, str],
     top_k: int = 5,
-) -> dict:
+) -> dict[str, Any]:
     """Evaluate all observations in a snapshot.
 
     For each observation:
@@ -143,7 +146,7 @@ def evaluate_snapshot(
     Returns aggregate and per-species results dict.
     """
     # Group by species for per-species stats
-    species_stats: dict[str, dict] = {}
+    species_stats: dict[str, dict[str, Any]] = {}
     total = 0
     error_count = 0
     top1_correct = 0
@@ -213,7 +216,7 @@ def evaluate_snapshot(
     }
 
 
-def print_results(results: dict) -> None:
+def print_results(results: dict[str, Any]) -> None:
     """Print a human-readable summary of eval results."""
     k = results["top_k"]
     print("\n=== BioCLIP Eval Results ===")
@@ -261,7 +264,7 @@ def print_results(results: dict) -> None:
             print(f"  {name:<35} {in_list:<10} {n:>4}  {t1:>6}  {tk:>6}")
 
 
-def save_results(results: dict, path: Path) -> None:
+def save_results(results: dict[str, Any], path: Path) -> None:
     """Save eval results to JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

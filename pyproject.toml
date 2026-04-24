@@ -25,6 +25,7 @@ eval = [
 dev = [
     "bioclip-models[export,verify,eval]",
     "ruff>=0.4",
+    "pyright>=1.1.400",
 ]
 
 [project.scripts]
@@ -40,3 +41,18 @@ include = ["bioclip_models*"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+
+[tool.pyright]
+include = ["bioclip_models"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+# Third-party ML libs (torch, open_clip, onnxruntime) either have no stubs or
+# very partial ones. Strict mode would flag every call as Unknown*; allow it.
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+reportUnknownParameterType = false
+reportUnknownLambdaType = false
+reportMissingParameterType = false
+reportUntypedFunctionDecorator = false

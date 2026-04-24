@@ -55,7 +55,7 @@ def _download_backbone(cache_path: Path) -> Path:
         return cache_path
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading GBIF backbone taxonomy (~466 MB)...")
+    print("Downloading GBIF backbone taxonomy (~466 MB)...")
     urllib.request.urlretrieve(BACKBONE_URL, str(cache_path))
     size_mb = cache_path.stat().st_size / (1024 * 1024)
     print(f"  Downloaded ({size_mb:.0f} MB)")
@@ -84,7 +84,8 @@ def build_species_list(
     # Pass 1: build id→name lookup and collect accepted species
     print("Parsing backbone taxonomy...")
     id_to_name: dict[str, str] = {}
-    species_rows: list[tuple] = []  # (canonical_name, kingdom_fk, phylum_fk, class_fk, order_fk, family_fk, genus_fk)
+    # Each row: (canonical_name, kingdom_fk, phylum_fk, class_fk, order_fk, family_fk, genus_fk)
+    species_rows: list[tuple[str, str, str, str, str, str, str]] = []
     line_count = 0
 
     with gzip.open(gz_path, "rt", encoding="utf-8") as f:
@@ -133,15 +134,15 @@ def build_species_list(
         if kingdom not in KINGDOMS_TO_INCLUDE:
             continue
 
-        by_kingdom[kingdom].append(SpeciesRecord(
-            scientific_name=name,
-            kingdom=kingdom,
-            phylum=resolve(p_fk),
-            class_=resolve(c_fk),
-            order=resolve(o_fk),
-            family=resolve(f_fk),
-            genus=resolve(g_fk),
-        ))
+        by_kingdom[kingdom].append(SpeciesRecord.model_validate({
+            "scientificName": name,
+            "kingdom": kingdom,
+            "phylum": resolve(p_fk),
+            "class": resolve(c_fk),
+            "order": resolve(o_fk),
+            "family": resolve(f_fk),
+            "genus": resolve(g_fk),
+        }))
 
     for k, species in by_kingdom.items():
         print(f"  {k}: {len(species):,} species")

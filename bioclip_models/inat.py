@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from .schema import (
     EvalObservation,
@@ -35,7 +36,7 @@ _TAXONOMY_RANKS = ("kingdom", "phylum", "class", "order", "family", "genus")
 _TAXA_BATCH_SIZE = 30
 
 
-def _get(url: str, params: dict) -> dict:
+def _get(url: str, params: dict[str, str | int]) -> dict[str, Any]:
     full_url = f"{url}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(full_url, headers={"User-Agent": "bioclip-models/eval"})
     for attempt in range(3):
@@ -47,7 +48,7 @@ def _get(url: str, params: dict) -> dict:
                 raise
             print(f"  Warning: request error (attempt {attempt + 1}/3): {e}, retrying...")
             time.sleep(5)
-    raise RuntimeError("unreachable")
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 def _fetch_taxa_batch(ids: list[int]) -> dict[int, InatTaxaBatchItem]:
@@ -75,6 +76,8 @@ def _fetch_taxa_batch(ids: list[int]) -> dict[int, InatTaxaBatchItem]:
                     raise
                 print(f"  Warning: taxa batch error (attempt {attempt + 1}/3): {e}, retrying...")
                 time.sleep(5)
+        else:
+            raise RuntimeError("unreachable")  # pragma: no cover
 
         response = InatTaxaBatchResponse.model_validate(data)
         for taxon in response.results:
@@ -197,15 +200,15 @@ def build_species_list_inat(count: int) -> list[SpeciesRecord]:
             if ancestor and ancestor.rank in taxonomy:
                 taxonomy[ancestor.rank] = ancestor.name
 
-        species_list.append(SpeciesRecord(
-            scientific_name=taxon.name,
-            kingdom=taxonomy["kingdom"],
-            phylum=taxonomy["phylum"],
-            class_=taxonomy["class"],
-            order=taxonomy["order"],
-            family=taxonomy["family"],
-            genus=taxonomy["genus"],
-        ))
+        species_list.append(SpeciesRecord.model_validate({
+            "scientificName": taxon.name,
+            "kingdom": taxonomy["kingdom"],
+            "phylum": taxonomy["phylum"],
+            "class": taxonomy["class"],
+            "order": taxonomy["order"],
+            "family": taxonomy["family"],
+            "genus": taxonomy["genus"],
+        }))
 
     matched = sum(1 for sp in species_list if sp.kingdom is not None)
     print(f"  Full taxonomy resolved for {matched}/{len(species_list)} species")
