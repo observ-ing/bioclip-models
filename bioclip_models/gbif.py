@@ -24,6 +24,8 @@ import random
 import urllib.request
 from pathlib import Path
 
+from .schema import SpeciesRecord
+
 BACKBONE_URL = "https://hosted-datasets.gbif.org/datasets/backbone/current/simple.txt.gz"
 
 # Column indices
@@ -64,7 +66,7 @@ def build_species_list(
     total_count: int = 100_000,
     cache_dir: Path | None = None,
     kingdom_weights: dict[str, float] | None = None,
-) -> list[dict]:
+) -> list[SpeciesRecord]:
     """Build a species list from the GBIF backbone bulk download.
 
     Two-pass approach:
@@ -124,29 +126,28 @@ def build_species_list(
             return None
         return id_to_name.get(fk)
 
-    by_kingdom: dict[str, list[dict]] = {k: [] for k in KINGDOMS_TO_INCLUDE}
+    by_kingdom: dict[str, list[SpeciesRecord]] = {k: [] for k in KINGDOMS_TO_INCLUDE}
 
     for name, k_fk, p_fk, c_fk, o_fk, f_fk, g_fk in species_rows:
         kingdom = resolve(k_fk)
         if kingdom not in KINGDOMS_TO_INCLUDE:
             continue
 
-        by_kingdom[kingdom].append({
-            "scientificName": name,
-            "commonName": None,
-            "kingdom": kingdom,
-            "phylum": resolve(p_fk),
-            "class": resolve(c_fk),
-            "order": resolve(o_fk),
-            "family": resolve(f_fk),
-            "genus": resolve(g_fk),
-        })
+        by_kingdom[kingdom].append(SpeciesRecord(
+            scientific_name=name,
+            kingdom=kingdom,
+            phylum=resolve(p_fk),
+            class_=resolve(c_fk),
+            order=resolve(o_fk),
+            family=resolve(f_fk),
+            genus=resolve(g_fk),
+        ))
 
     for k, species in by_kingdom.items():
         print(f"  {k}: {len(species):,} species")
 
     # Sample to target count per kingdom weight
-    result: list[dict] = []
+    result: list[SpeciesRecord] = []
     seen: set[str] = set()
 
     for kingdom, weight in kingdom_weights.items():
@@ -158,24 +159,26 @@ def build_species_list(
             pool = pool[:target]
 
         for sp in pool:
-            if sp["scientificName"] not in seen:
-                seen.add(sp["scientificName"])
+            if sp.scientific_name not in seen:
+                seen.add(sp.scientific_name)
                 result.append(sp)
 
     # Sort for deterministic output
-    result.sort(key=lambda s: s["scientificName"])
+    result.sort(key=lambda s: s.scientific_name)
     print(f"  Selected {len(result):,} species (target: {total_count:,})")
     return result[:total_count]
 
 
-def save_species_list(species_list: list[dict], path: Path) -> None:
-    """Save species list to JSON."""
+def save_species_list(species_list: list[SpeciesRecord], path: Path) -> None:
+    """Save species list to JSON, using alias field names (scientificName, class, …)."""
+    serialized = [sp.model_dump(by_alias=True) for sp in species_list]
     with open(path, "w") as f:
-        json.dump(species_list, f, indent=2)
+        json.dump(serialized, f, indent=2)
     print(f"Saved {len(species_list)} species to {path}")
 
 
-def load_species_list(path: Path) -> list[dict]:
-    """Load species list from JSON."""
+def load_species_list(path: Path) -> list[SpeciesRecord]:
+    """Load species list from JSON, validating each record against SpeciesRecord."""
     with open(path) as f:
-        return json.load(f)
+        raw = json.load(f)
+    return [SpeciesRecord.model_validate(item) for item in raw]

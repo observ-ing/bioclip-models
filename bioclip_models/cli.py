@@ -6,8 +6,10 @@ import argparse
 import sys
 from pathlib import Path
 
+from .schema import SpeciesRecord
 
-def _build_species_list(args: argparse.Namespace) -> list[dict]:
+
+def _build_species_list(args: argparse.Namespace) -> list[SpeciesRecord]:
     """Build species list according to --strategy."""
     if args.strategy == "inat-ordered":
         from .inat import build_species_list_inat
@@ -105,9 +107,9 @@ def cmd_eval(args: argparse.Namespace) -> None:
     from .inat import load_snapshot
 
     snapshot = load_snapshot(args.snapshot)
-    records = snapshot["observations"]
+    records = snapshot.observations
     print(
-        f"Snapshot: {len(snapshot['species'])} species, "
+        f"Snapshot: {len(snapshot.species)} species, "
         f"{len(records)} observations"
     )
 

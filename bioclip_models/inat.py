@@ -14,6 +14,17 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .schema import (
+    EvalObservation,
+    EvalSnapshot,
+    InatObservationsResponse,
+    InatSpeciesCountsResponse,
+    InatTaxaBatchItem,
+    InatTaxaBatchResponse,
+    InatTaxon,
+    SpeciesRecord,
+)
+
 INAT_API = "https://api.inaturalist.org/v1"
 INAT_API_V2 = "https://api.inaturalist.org/v2"
 
@@ -39,13 +50,13 @@ def _get(url: str, params: dict) -> dict:
     raise RuntimeError("unreachable")
 
 
-def _fetch_taxa_batch(ids: list[int]) -> dict[int, dict]:
+def _fetch_taxa_batch(ids: list[int]) -> dict[int, InatTaxaBatchItem]:
     """Batch-fetch taxa by ID from iNat v2 API.
 
-    Returns {id: {"name": str, "rank": str}} for all requested IDs.
-    Batches requests at _TAXA_BATCH_SIZE IDs per call, sleeping 1s between batches.
+    Returns {id: InatTaxaBatchItem} for all requested IDs. Batches at
+    _TAXA_BATCH_SIZE IDs per call, sleeping 1s between batches.
     """
-    result: dict[int, dict] = {}
+    result: dict[int, InatTaxaBatchItem] = {}
 
     for i in range(0, len(ids), _TAXA_BATCH_SIZE):
         batch = ids[i: i + _TAXA_BATCH_SIZE]
@@ -65,8 +76,9 @@ def _fetch_taxa_batch(ids: list[int]) -> dict[int, dict]:
                 print(f"  Warning: taxa batch error (attempt {attempt + 1}/3): {e}, retrying...")
                 time.sleep(5)
 
-        for taxon in data.get("results", []):
-            result[taxon["id"]] = {"name": taxon["name"], "rank": taxon["rank"]}
+        response = InatTaxaBatchResponse.model_validate(data)
+        for taxon in response.results:
+            result[taxon.id] = taxon
 
         if i + _TAXA_BATCH_SIZE < len(ids):
             time.sleep(1)
@@ -95,20 +107,18 @@ def fetch_top_species(count: int) -> list[str]:
                 "page": page,
             },
         )
-        results = data.get("results", [])
-        if not results:
+        response = InatSpeciesCountsResponse.model_validate(data)
+        if not response.results:
             break
 
-        for r in results:
-            taxon = r.get("taxon", {})
-            name = taxon.get("name")
-            if name and name not in names:
-                names.append(name)
+        for r in response.results:
+            if r.taxon.name and r.taxon.name not in names:
+                names.append(r.taxon.name)
             if len(names) >= count:
                 break
 
         print(f"  {len(names)}/{count} species...")
-        if len(results) < per_page:
+        if len(response.results) < per_page:
             break
         page += 1
         time.sleep(1)
@@ -117,21 +127,21 @@ def fetch_top_species(count: int) -> list[str]:
     return names[:count]
 
 
-def build_species_list_inat(count: int) -> list[dict]:
+def build_species_list_inat(count: int) -> list[SpeciesRecord]:
     """Build a species list ordered by iNat observation frequency with full taxonomy.
 
     Steps:
     1. Fetch top N species with ancestor_ids from /observations/species_counts
        (research-grade, all licenses — no CC0 filter for frequency ranking)
     2. Collect all unique ancestor IDs across all species
-    3. Batch-fetch ancestor taxa → {id: {name, rank}} via /v2/taxa
+    3. Batch-fetch ancestor taxa via /v2/taxa
     4. For each species, resolve kingdom/phylum/class/order/family/genus from ancestor chain
-    5. Return list[dict] in observation-frequency order
+    5. Return list[SpeciesRecord] in observation-frequency order
 
-    Output format matches species_labels.json (compatible with generate_species_embeddings).
+    Output is compatible with species_labels.json (used by generate_species_embeddings).
     """
     print(f"Fetching top {count} most-observed species from iNaturalist...")
-    taxa: list[dict] = []  # raw iNat taxon objects
+    taxa: list[InatTaxon] = []
     page = 1
     per_page = min(500, count)
 
@@ -145,19 +155,18 @@ def build_species_list_inat(count: int) -> list[dict]:
                 "page": page,
             },
         )
-        results = data.get("results", [])
-        if not results:
+        response = InatSpeciesCountsResponse.model_validate(data)
+        if not response.results:
             break
 
-        for r in results:
-            taxon = r.get("taxon", {})
-            if taxon.get("name"):
-                taxa.append(taxon)
+        for r in response.results:
+            if r.taxon.name:
+                taxa.append(r.taxon)
             if len(taxa) >= count:
                 break
 
         print(f"  {len(taxa)}/{count} species fetched...")
-        if len(results) < per_page:
+        if len(response.results) < per_page:
             break
         page += 1
         time.sleep(1)
@@ -168,50 +177,44 @@ def build_species_list_inat(count: int) -> list[dict]:
     # Collect all unique ancestor IDs (excluding the species taxon ID itself)
     all_ancestor_ids: set[int] = set()
     for taxon in taxa:
-        species_id = taxon.get("id")
-        for aid in taxon.get("ancestor_ids", []):
-            if aid != species_id:
+        for aid in taxon.ancestor_ids:
+            if aid != taxon.id:
                 all_ancestor_ids.add(aid)
 
     print(f"Resolving {len(all_ancestor_ids)} unique ancestor taxa...")
     ancestor_cache = _fetch_taxa_batch(sorted(all_ancestor_ids))
     print(f"  Resolved {len(ancestor_cache)} ancestors")
 
-    # Build species dicts with resolved taxonomy
-    species_list: list[dict] = []
+    # Build species records with resolved taxonomy
+    species_list: list[SpeciesRecord] = []
     for taxon in taxa:
-        species_id = taxon.get("id")
         taxonomy: dict[str, str | None] = {rank: None for rank in _TAXONOMY_RANKS}
 
-        for aid in taxon.get("ancestor_ids", []):
-            if aid == species_id:
+        for aid in taxon.ancestor_ids:
+            if aid == taxon.id:
                 continue
             ancestor = ancestor_cache.get(aid)
-            if ancestor and ancestor["rank"] in taxonomy:
-                taxonomy[ancestor["rank"]] = ancestor["name"]
+            if ancestor and ancestor.rank in taxonomy:
+                taxonomy[ancestor.rank] = ancestor.name
 
-        species_list.append({
-            "scientificName": taxon["name"],
-            "commonName": None,
-            "kingdom": taxonomy["kingdom"],
-            "phylum": taxonomy["phylum"],
-            "class": taxonomy["class"],
-            "order": taxonomy["order"],
-            "family": taxonomy["family"],
-            "genus": taxonomy["genus"],
-        })
+        species_list.append(SpeciesRecord(
+            scientific_name=taxon.name,
+            kingdom=taxonomy["kingdom"],
+            phylum=taxonomy["phylum"],
+            class_=taxonomy["class"],
+            order=taxonomy["order"],
+            family=taxonomy["family"],
+            genus=taxonomy["genus"],
+        ))
 
-    matched = sum(1 for sp in species_list if sp["kingdom"] is not None)
+    matched = sum(1 for sp in species_list if sp.kingdom is not None)
     print(f"  Full taxonomy resolved for {matched}/{len(species_list)} species")
     return species_list
 
 
-def fetch_observations(taxon_name: str, count: int) -> list[dict]:
-    """Fetch research-grade CC0 observations with photos for a species.
-
-    Returns list of {id, inat_taxon_name, image_url} dicts.
-    """
-    records: list[dict] = []
+def fetch_observations(taxon_name: str, count: int) -> list[EvalObservation]:
+    """Fetch research-grade CC0 observations with photos for a species."""
+    records: list[EvalObservation] = []
     seen_ids: set[int] = set()
     page = 1
 
@@ -233,31 +236,27 @@ def fetch_observations(taxon_name: str, count: int) -> list[dict]:
             print(f"  Warning: API error for {taxon_name}: {e}")
             break
 
-        results = data.get("results", [])
-        if not results:
+        response = InatObservationsResponse.model_validate(data)
+        if not response.results:
             break
 
-        for obs in results:
-            obs_id = obs.get("id")
-            if obs_id in seen_ids:
+        for obs in response.results:
+            if obs.id in seen_ids:
                 continue
-            seen_ids.add(obs_id)
+            seen_ids.add(obs.id)
 
-            photos = obs.get("photos", [])
-            if not photos:
+            if not obs.photos:
                 continue
-            url = photos[0].get("url", "")
             # Replace square thumbnail with medium (better resolution)
-            url = url.replace("/square.", "/medium.")
+            url = obs.photos[0].url.replace("/square.", "/medium.")
 
-            taxon = obs.get("taxon", {})
-            name = taxon.get("name", taxon_name)
+            name = obs.taxon.name if obs.taxon and obs.taxon.name else taxon_name
 
-            records.append({"id": obs_id, "inat_taxon_name": name, "image_url": url})
+            records.append(EvalObservation(id=obs.id, inat_taxon_name=name, image_url=url))
             if len(records) >= count:
                 break
 
-        if len(results) < 200:
+        if len(response.results) < 200:
             break
         page += 1
         time.sleep(1)
@@ -265,41 +264,43 @@ def fetch_observations(taxon_name: str, count: int) -> list[dict]:
     return records
 
 
-def build_eval_dataset(species_names: list[str], obs_per_species: int) -> list[dict]:
+def build_eval_dataset(species_names: list[str], obs_per_species: int) -> list[EvalObservation]:
     """Fetch observations for each species and deduplicate by observation id."""
-    all_records: list[dict] = []
+    all_records: list[EvalObservation] = []
     seen_ids: set[int] = set()
 
     for i, name in enumerate(species_names, 1):
         print(f"  [{i}/{len(species_names)}] {name}")
         records = fetch_observations(name, obs_per_species)
         for r in records:
-            if r["id"] not in seen_ids:
-                seen_ids.add(r["id"])
+            if r.id not in seen_ids:
+                seen_ids.add(r.id)
                 all_records.append(r)
         time.sleep(1)
 
     return all_records
 
 
-def save_snapshot(species_names: list[str], records: list[dict], path: Path) -> None:
+def save_snapshot(
+    species_names: list[str], records: list[EvalObservation], path: Path
+) -> None:
     """Save eval snapshot to JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    snapshot = {
-        "version": "1",
-        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "species_count": len(species_names),
-        "obs_per_species": len(records) // max(len(species_names), 1),
-        "total_observations": len(records),
-        "species": species_names,
-        "observations": records,
-    }
+    snapshot = EvalSnapshot(
+        version="1",
+        created_at=datetime.now(timezone.utc),
+        species_count=len(species_names),
+        obs_per_species=len(records) // max(len(species_names), 1),
+        total_observations=len(records),
+        species=species_names,
+        observations=records,
+    )
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(snapshot, f, indent=2)
+        f.write(snapshot.model_dump_json(indent=2))
     print(f"Saved snapshot: {path} ({len(records)} observations, {len(species_names)} species)")
 
 
-def load_snapshot(path: Path) -> dict:
-    """Load eval snapshot from JSON. Returns the full snapshot dict."""
+def load_snapshot(path: Path) -> EvalSnapshot:
+    """Load and validate eval snapshot from JSON."""
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        return EvalSnapshot.model_validate_json(f.read())
