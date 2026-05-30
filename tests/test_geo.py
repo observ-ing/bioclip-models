@@ -7,7 +7,6 @@ taxon-name matching logic. H3 and geopandas internals are not re-tested here.
 
 from __future__ import annotations
 
-import bisect
 import json
 import struct
 from pathlib import Path
@@ -24,6 +23,7 @@ from bioclip_models.geo import (
     build_geo_index,
 )
 from bioclip_models.verify import verify_geo_index
+from species_range_index import SpeciesRangeIndex
 
 
 def _unpack_header(data: bytes) -> dict:
@@ -156,26 +156,18 @@ def test_build_geo_index_csr_invariants(
 def test_build_geo_index_lookup_reflects_polygons(
     sample_labels_file: Path, sample_ranges_geojson: Path, tmp_path: Path
 ):
-    """SF falls in species 0's range only; SLC falls in both 0 and 1."""
-    from h3.api import basic_int as h3
+    """SF falls in species 0's range only; SLC falls in both 0 and 1.
 
+    Reads the writer's output back through the production Rust reader
+    (`species_range_index`) — a cross-language round-trip that pins the format
+    contract instead of re-deriving the CSR lookup in Python.
+    """
     out = tmp_path / "index.bin"
     build_geo_index(sample_ranges_geojson, sample_labels_file, out)
 
-    data = out.read_bytes()
-    hdr = _unpack_header(data)
-    cells, offsets, species_ids = _unpack_body(data, hdr["num_cells"], hdr["num_entries"])
-    cells_list = cells.tolist()
-
-    def species_at(lat: float, lon: float) -> list[int]:
-        target = h3.latlng_to_cell(lat, lon, 4)
-        i = bisect.bisect_left(cells_list, target)
-        if i == len(cells_list) or cells_list[i] != target:
-            return []
-        return species_ids[offsets[i] : offsets[i + 1]].tolist()
-
-    assert species_at(37.77, -122.42) == [0], "SF should be in range A only"
-    assert species_at(40.76, -111.89) == [0, 1], "SLC should be in both A and B"
+    idx = SpeciesRangeIndex.load(str(out), expected_count=3)
+    assert idx.ids_at(37.77, -122.42) == [0], "SF should be in range A only"
+    assert idx.ids_at(40.76, -111.89) == [0, 1], "SLC should be in both A and B"
 
 
 def test_build_geo_index_unmatched_taxa_produce_empty_index(
