@@ -107,8 +107,8 @@ def verify_geo_index(geo_index_path: Path, labels_path: Path) -> None:
     """
     # The PyO3 extension ships no type stubs yet, so pyright can't see the
     # exported symbol. TODO: drop once species-range-index bundles a .pyi.
-    from species_range_index import (  # pyright: ignore[reportAttributeAccessIssue]
-        SpeciesRangeIndex,
+    from species_range_index import (
+        SpeciesRangeIndex,  # pyright: ignore[reportAttributeAccessIssue]
     )
 
     print(f"Verifying geo index: {geo_index_path}")
