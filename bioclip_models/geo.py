@@ -36,13 +36,10 @@ the in-range species indices are `species_ids[offsets[i]..offsets[i+1]]`.
 from __future__ import annotations
 
 import json
-import struct
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 MAGIC = b"OGI1"
 VERSION = 1
@@ -258,52 +255,23 @@ def _invert_and_serialize(
     resolution: int,
     output_path: Path,
 ) -> None:
-    """Invert to {cell → species[]} and write the CSR binary."""
-    # Invert. We collect species per cell, then sort per cell for determinism.
+    """Invert to {cell → species[]} and write the CSR binary via the Rust writer."""
+    from species_range_index import (  # pyright: ignore[reportAttributeAccessIssue]
+        SpeciesRangeIndex,
+    )
+
+    # Invert species → cells into cell → species[]. The Rust writer sorts cells,
+    # sorts + dedups ids within each cell, and merges duplicate cells, so we hand
+    # it the raw mapping rather than normalizing here.
     cells_to_species: dict[int, list[int]] = {}
     for species_idx, cells in species_to_cells.items():
         for cell in cells:
             cells_to_species.setdefault(cell, []).append(species_idx)
 
-    sorted_cells = sorted(cells_to_species.keys())
-    num_cells = len(sorted_cells)
-    cells_arr = np.asarray(sorted_cells, dtype=np.uint64)
+    SpeciesRangeIndex.write(str(output_path), num_species, resolution, cells_to_species)
 
-    # Build offsets and species-id arrays together for cache locality.
-    species_lens = np.fromiter(
-        (len(cells_to_species[c]) for c in sorted_cells),
-        count=num_cells,
-        dtype=np.uint32,
-    )
-    offsets = np.empty(num_cells + 1, dtype=np.uint32)
-    offsets[0] = 0
-    np.cumsum(species_lens, out=offsets[1:])
-    num_entries = int(offsets[-1])
-
-    species_ids = np.empty(num_entries, dtype=np.uint32)
-    for i, cell in enumerate(sorted_cells):
-        ids = cells_to_species[cell]
-        ids.sort()
-        species_ids[offsets[i] : offsets[i + 1]] = ids
-
-    with open(output_path, "wb") as f:
-        f.write(MAGIC)
-        f.write(
-            struct.pack(
-                "<IIIIIII",
-                VERSION,
-                num_species,
-                resolution,
-                num_cells,
-                num_entries,
-                0,
-                0,
-            )
-        )
-        cells_arr.tofile(f)
-        offsets.tofile(f)
-        species_ids.tofile(f)
-
+    num_cells = len(cells_to_species)
+    num_entries = sum(len(ids) for ids in cells_to_species.values())
     size_mb = output_path.stat().st_size / (1024 * 1024)
     print(
         f"  wrote {output_path}: {num_cells} cells, {num_entries} entries, "
