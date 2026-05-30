@@ -16,6 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # species-range-index is a git dependency built from Rust source via
+      # maturin at install time, so the build needs a Rust toolchain on PATH.
+      - uses: dtolnay/rust-toolchain@stable
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

@@ -17,6 +17,10 @@ export = [
 verify = [
     "onnxruntime>=1.17",
     "pillow>=10.0",
+    # Read OGI1 geo-index files through the production Rust reader instead of a
+    # hand-rolled parser. Built from source via maturin (needs a Rust toolchain
+    # at install time).
+    "species-range-index @ git+https://github.com/observ-ing/species-range-index@v0.2.0#subdirectory=python",
 ]
 eval = [
     "onnxruntime>=1.17",
@@ -26,6 +30,8 @@ geo = [
     "geopandas>=1.0",
     "h3>=4.1",
     "shapely>=2.0",
+    # Read back / round-trip OGI1 indices through the production Rust reader.
+    "species-range-index @ git+https://github.com/observ-ing/species-range-index@v0.2.0#subdirectory=python",
 ]
 dev = [
     "bioclip-models[export,verify,eval,geo]",

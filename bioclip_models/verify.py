@@ -105,7 +105,7 @@ def verify_geo_index(geo_index_path: Path, labels_path: Path) -> None:
     terminate at num_entries, and that every species index is in-bounds for
     the label set.
     """
-    import struct
+    from species_range_index import SpeciesRangeIndex
 
     print(f"Verifying geo index: {geo_index_path}")
 
@@ -115,33 +115,22 @@ def verify_geo_index(geo_index_path: Path, labels_path: Path) -> None:
     labels = [SpeciesRecord.model_validate(item) for item in raw_labels]
     num_species = len(labels)
 
-    data = geo_index_path.read_bytes()
-    if len(data) < 32:
-        raise ValueError(f"Geo index too short ({len(data)} bytes) to contain header")
-
-    magic = data[:4]
-    if magic != b"OGI1":
-        raise ValueError(f"Bad magic: expected b'OGI1', got {magic!r}")
-
-    version, hdr_species, h3_res, num_cells, num_entries, _, _ = struct.unpack(
-        "<IIIIIII", data[4:32]
+    # Validate magic / version / size / CSR endpoints and staleness through the
+    # production Rust reader — the exact code the service loads with — instead of
+    # a parallel hand-rolled header parser. A bad/stale/corrupt file (incl. a
+    # num_species mismatch) raises ValueError here.
+    idx = SpeciesRangeIndex.load(geo_index_path, expected_count=num_species)
+    num_cells = idx.num_cells
+    num_entries = idx.num_entries
+    print(
+        f"  version=1 h3_res={idx.resolution} "
+        f"num_cells={num_cells} num_entries={num_entries}"
     )
-    print(f"  version={version} h3_res={h3_res} num_cells={num_cells} num_entries={num_entries}")
 
-    if version != 1:
-        raise ValueError(f"Unsupported geo index version: {version}")
-    if hdr_species != num_species:
-        raise ValueError(
-            f"Geo index num_species ({hdr_species}) does not match labels "
-            f"({num_species}) — index is stale"
-        )
-
-    expected_size = 32 + num_cells * 8 + (num_cells + 1) * 4 + num_entries * 4
-    if len(data) != expected_size:
-        raise ValueError(
-            f"Geo index size mismatch: expected {expected_size}, got {len(data)}"
-        )
-
+    # The deeper CSR integrity checks below (cells strictly ascending, offsets
+    # monotonic, species ids in-bounds, per-cell stats) aren't exposed by the
+    # reader's API, so read the raw body directly for those.
+    data = geo_index_path.read_bytes()
     off = 32
     cells = np.frombuffer(data, dtype=np.uint64, count=num_cells, offset=off)
     off += num_cells * 8
