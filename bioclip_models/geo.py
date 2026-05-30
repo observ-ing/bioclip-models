@@ -256,9 +256,7 @@ def _invert_and_serialize(
     output_path: Path,
 ) -> None:
     """Invert to {cell → species[]} and write the CSR binary via the Rust writer."""
-    from species_range_index import (
-        SpeciesRangeIndex,  # pyright: ignore[reportAttributeAccessIssue]
-    )
+    from species_range_index import SpeciesRangeIndex
 
     # Invert species → cells into cell → species[]. The Rust writer sorts cells,
     # sorts + dedups ids within each cell, and merges duplicate cells, so we hand
