@@ -1,6 +1,6 @@
 [project]
 name = "bioclip-models"
-version = "0.2.0"
+version = "0.3.0"
 description = "BioCLIP model preparation pipeline for Observ.ing species identification"
 requires-python = ">=3.11"
 dependencies = [

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .schema import SpeciesRecord
+from .variants import DEFAULT_VARIANT, MODEL_VARIANTS, resolve_variant
 
 
 def _build_species_list(args: argparse.Namespace) -> list[SpeciesRecord]:
@@ -41,8 +42,11 @@ def cmd_prepare(args: argparse.Namespace) -> None:
 
     print(f"Species count: {len(species_list)}")
 
+    variant = resolve_variant(args.model)
+    print(f"Model: {variant.key} — {variant.description}")
+
     # Step 2: Load BioCLIP
-    model, tokenizer, _ = load_bioclip()
+    model, tokenizer, _ = load_bioclip(variant)
 
     # Step 3: Export vision encoder
     onnx_path = output_dir / "vision_encoder.onnx"
@@ -51,9 +55,15 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     else:
         export_vision_encoder(model, onnx_path)
 
-    # Step 4: Generate embeddings
+    # Step 4: Generate embeddings (text encoder of the same variant, so the
+    # width follows the model — ViT-H=1024, ViT-L=768). Sanity-check it.
     embeddings_path = output_dir / "species_embeddings.bin"
-    generate_species_embeddings(model, tokenizer, species_list, embeddings_path)
+    embeddings = generate_species_embeddings(model, tokenizer, species_list, embeddings_path)
+    if embeddings.shape[1] != variant.embed_dim:
+        raise ValueError(
+            f"Generated embedding width {embeddings.shape[1]} != expected "
+            f"{variant.embed_dim} for {variant.key}"
+        )
 
     # Step 5: (optional) Geo index
     if args.range_maps:
@@ -76,6 +86,11 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     for f in sorted(output_dir.iterdir()):
         size_mb = f.stat().st_size / (1024 * 1024)
         print(f"  {f.name}: {size_mb:.1f} MB")
+
+    print(
+        f"\nDeploy as MODEL_VERSION={variant.version} "
+        f"(set the matching build-arg when building the observing-species-id image)."
+    )
 
 
 def cmd_geo(args: argparse.Namespace) -> None:
@@ -170,6 +185,13 @@ def main() -> None:
         type=Path,
         default=Path("output"),
         help="Output directory (default: output/)",
+    )
+    p_prepare.add_argument(
+        "--model",
+        choices=list(MODEL_VARIANTS),
+        default=DEFAULT_VARIANT,
+        help=f"BioCLIP variant to export (default: {DEFAULT_VARIANT}). "
+        "Use bioclip-2 (ViT-L/14) for the faster live-loop service.",
     )
     p_prepare.add_argument(
         "--species-count",

@@ -11,17 +11,24 @@ import numpy as np
 import torch
 
 from .schema import SpeciesRecord
+from .variants import DEFAULT_VARIANT, ModelVariant, resolve_variant
 
 
-def load_bioclip():
-    """Load BioCLIP 2.5 (ViT-H/14) model and tokenizer from HuggingFace via open_clip."""
+def load_bioclip(variant: ModelVariant | None = None):
+    """Load a BioCLIP variant and its tokenizer from HuggingFace via open_clip.
+
+    Defaults to the full-accuracy ViT-H/14 build; pass the ViT-L `bioclip-2`
+    variant for the faster live-loop model.
+    """
     import open_clip
 
-    model_name = "hf-hub:imageomics/bioclip-2.5-vith14"
-    print(f"Loading BioCLIP 2.5 from HuggingFace ({model_name})...")
-    model, _, preprocess = open_clip.create_model_and_transforms(model_name)
+    if variant is None:
+        variant = resolve_variant(DEFAULT_VARIANT)
+
+    print(f"Loading {variant.key} from HuggingFace ({variant.hf_hub})...")
+    model, _, preprocess = open_clip.create_model_and_transforms(variant.hf_hub)
     model.eval()
-    tokenizer = open_clip.get_tokenizer(model_name)
+    tokenizer = open_clip.get_tokenizer(variant.hf_hub)
     print("  Model loaded")
     return model, tokenizer, preprocess
 
