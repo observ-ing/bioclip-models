@@ -23,18 +23,29 @@ These files are consumed by the `observing-species-id` Rust service in [observ-i
 
 ## Setup
 
+Uses [uv](https://docs.astral.sh/uv/), which fetches and pins its own CPython
+per `.python-version`. A system Python is fine too, but a Homebrew one is not
+recommended: `brew upgrade` removes the old `python@3.x` formula, which leaves
+every symlink in an existing `.venv` dangling.
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
+brew install uv          # or: curl -LsSf https://astral.sh/uv/install.sh | sh
+uv venv
+uv pip install -e '.[dev]'
 ```
+
+`uv venv` creates `.venv/`; `uv run bioclip-prepare ...` uses it without
+activating, or `source .venv/bin/activate` if you'd rather.
 
 The `export` extra pulls in PyTorch and open_clip (~2 GB). The `verify` extra adds onnxruntime. Install only what you need:
 
 ```bash
-pip install -e '.[export]'   # ONNX export + embedding generation
-pip install -e '.[verify]'   # verify artifacts without PyTorch
+uv pip install -e '.[export]'   # ONNX export + embedding generation
+uv pip install -e '.[verify]'   # verify artifacts without PyTorch
 ```
+
+`verify` and `geo` build `species-range-index` from Rust source via maturin, so
+those need a Rust toolchain on `PATH` at install time.
 
 ## Usage
 
