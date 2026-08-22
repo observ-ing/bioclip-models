@@ -28,14 +28,17 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     output_dir: Path = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Step 1: Species list
+    # Step 1: Species list. The list feeds embedding generation, so insist it
+    # still carries taxonomy — a bundle-trimmed file would otherwise produce
+    # degraded prompts with no error. See gbif.load_species_list.
     labels_path = output_dir / "species_labels.json"
+    require_taxonomy = not args.allow_missing_taxonomy
     if args.species_file:
         print(f"Loading species list from {args.species_file}")
-        species_list = load_species_list(args.species_file)
+        species_list = load_species_list(args.species_file, require_taxonomy=require_taxonomy)
     elif labels_path.exists() and not args.rebuild_labels:
         print(f"Using existing species list: {labels_path}")
-        species_list = load_species_list(labels_path)
+        species_list = load_species_list(labels_path, require_taxonomy=require_taxonomy)
     else:
         species_list = _build_species_list(args)
         save_species_list(species_list, labels_path)
@@ -91,6 +94,17 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         f"\nDeploy as MODEL_VERSION={variant.version} "
         f"(set the matching build-arg when building the observing-species-id image)."
     )
+    print(
+        f"Package for release with: bioclip-prepare package {output_dir} "
+        f"--output {variant.version}-models.tar.gz"
+    )
+
+
+def cmd_package(args: argparse.Namespace) -> None:
+    """Package a prepared model directory into a release tarball."""
+    from .bundle import build_bundle
+
+    build_bundle(args.model_dir, args.output)
 
 
 def cmd_geo(args: argparse.Namespace) -> None:
@@ -221,6 +235,13 @@ def main() -> None:
         help="Re-fetch species list even if species_labels.json exists",
     )
     p_prepare.add_argument(
+        "--allow-missing-taxonomy",
+        action="store_true",
+        help="Accept a species list with no phylum/class/order/family/genus. "
+        "Prompts degrade to genus + epithet, so only use this for a "
+        "deliberately minimal --species-file.",
+    )
+    p_prepare.add_argument(
         "--strategy",
         choices=["gbif-random", "inat-ordered"],
         default="gbif-random",
@@ -240,6 +261,26 @@ def main() -> None:
         help="H3 resolution for the geo index (default: 4, ~26km hex edges)",
     )
     p_prepare.set_defaults(func=cmd_prepare)
+
+    # --- package ---
+    p_package = subparsers.add_parser(
+        "package",
+        help="Package a model directory into a release tarball, trimming "
+        "species_labels.json to the fields the service reads",
+    )
+    p_package.add_argument(
+        "model_dir",
+        type=Path,
+        help="Prepared model directory (e.g. output/ or output-live/)",
+    )
+    p_package.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        required=True,
+        help="Destination tarball path (e.g. bioclip-2.5-models.tar.gz)",
+    )
+    p_package.set_defaults(func=cmd_package)
 
     # --- geo ---
     p_geo = subparsers.add_parser(

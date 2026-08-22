@@ -17,9 +17,14 @@ Two checkpoints are supported via `--model`; the text embeddings are generated b
 |------|-------------|------|
 | `vision_encoder.onnx` | BioCLIP 2.5 ViT-H/14 vision encoder | ~1.2 GB |
 | `species_embeddings.bin` | Pre-computed text embeddings, `[N, 1024]` f32 | ~400 MB |
-| `species_labels.json` | Species metadata (name, taxonomy, common name) | ~10 MB |
+| `species_labels.json` | Species metadata (name, taxonomy, common name) | ~46 MB |
 
 These files are consumed by the `observing-species-id` Rust service in [observ-ing/core](https://github.com/observ-ing/core).
+
+`species_labels.json` in the output directory is the pipeline's source of
+truth and carries the full 8-field record. The service only reads three of
+them, so `bioclip-prepare package` trims it on the way into the release
+tarball — see [Packaging a release](#packaging-a-release).
 
 ## Setup
 
@@ -74,6 +79,30 @@ bioclip-prepare labels --species-count 100000 --output output/species_labels.jso
 bioclip-prepare verify output/
 ```
 
+### Packaging a release
+
+```bash
+bioclip-prepare package output/ --output bioclip-2.5-models.tar.gz
+```
+
+This writes a flat gzipped tarball (`vision_encoder.onnx`, its `.onnx.data`
+sidecar if present, `species_embeddings.bin`, `species_labels.json`, and
+`species_geo_index.bin` if built) ready to attach to a GitHub release.
+
+The bundled `species_labels.json` keeps only the three fields the Rust service
+deserializes — `scientificName`, `commonName`, `kingdom` — which drops ~57% of
+the file (26 MiB of 46 MiB at 200k species). `observing-species-id-live` runs
+on a 4 GiB Cloud Run instance and parses this file on every cold start, so the
+five discarded ranks were pure startup cost.
+
+The full record stays in `output/species_labels.json`: `export.py` needs
+phylum/class/order/family/genus to build BioCLIP's 7-rank taxonomic prompts,
+`geo.py` reads the file, and `prepare` reuses it as a cache. Feeding a trimmed
+file back into `prepare` would silently produce taxonomy-free prompts and
+degraded embeddings, so `prepare` rejects a label set with no taxonomy ranks
+at all. Override with `--allow-missing-taxonomy` if you genuinely want
+genus/epithet-only prompts from a minimal `--species-file`.
+
 ### Use a custom species list
 
 ```bash
@@ -108,7 +137,15 @@ bioclip-prepare prepare \
 cp output/species_geo_index.bin output-live/
 ```
 
-This writes `output-live/vision_encoder.onnx` (ViT-L) and `species_embeddings.bin` (`[N, 768]`). Package and publish it as a release bundle, then point the core repo's `observing-species-id-live` image at it (`SPECIES_MODEL_URL` build-arg) and set `MODEL_VERSION=bioclip-2-vit-l-14` (the `prepare` run prints this).
+This writes `output-live/vision_encoder.onnx` (ViT-L) and `species_embeddings.bin` (`[N, 768]`). Package it with
+
+```bash
+bioclip-prepare package output-live/ --output bioclip-2-vit-l-models.tar.gz
+```
+
+then publish that as a release bundle, point the core repo's `observing-species-id-live` image at it (`SPECIES_MODEL_URL` build-arg) and set `MODEL_VERSION=bioclip-2-vit-l-14` (the `prepare` run prints this).
+
+Note that `--species-file output/species_labels.json` must be the pipeline's full labels file, not one extracted from a release tarball — the bundled copy is trimmed and `prepare` will reject it.
 
 ### Re-run with cached artifacts
 
