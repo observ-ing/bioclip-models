@@ -54,6 +54,13 @@ include = ["bioclip_models*"]
 target-version = "py311"
 line-length = 100
 
+[tool.ruff.lint]
+# Selected explicitly rather than inherited. Ruff 0.16.0 widened its default
+# rule set from 118 rules to 826, which turned CI red on unchanged code — the
+# `ruff>=0.4` dependency has no upper bound, so the runner picked it up
+# silently. This is ruff's historical default (E4/E7/E9/F) plus pyupgrade.
+select = ["E4", "E7", "E9", "F", "UP"]
+
 [tool.pyright]
 include = ["bioclip_models"]
 pythonVersion = "3.11"

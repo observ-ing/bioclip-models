@@ -77,7 +77,7 @@ def generate_species_embeddings(
     species_list: list[SpeciesRecord],
     output_path: Path,
     batch_size: int = 128,
-    device: "torch.device | None" = None,  # pyright: ignore[reportPrivateImportUsage]
+    device: torch.device | None = None,  # pyright: ignore[reportPrivateImportUsage]
 ) -> np.ndarray:
     """Generate L2-normalized text embeddings for all species.
 

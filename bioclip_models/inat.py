@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -291,7 +291,7 @@ def save_snapshot(
     path.parent.mkdir(parents=True, exist_ok=True)
     snapshot = EvalSnapshot(
         version="1",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
         species_count=len(species_names),
         obs_per_species=len(records) // max(len(species_names), 1),
         total_observations=len(records),
