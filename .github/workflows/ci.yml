@@ -20,9 +20,10 @@ jobs:
       # maturin at install time, so the build needs a Rust toolchain on PATH.
       - uses: dtolnay/rust-toolchain@stable
 
+      # Read the version from .python-version so CI and local setup can't drift.
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
           cache: pip
           cache-dependency-path: pyproject.toml
 
