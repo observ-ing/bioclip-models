@@ -40,7 +40,7 @@ def _species_name(name: str) -> str:
 
 def load_model_artifacts(
     model_dir: Path,
-) -> tuple["ort.InferenceSession", np.ndarray, dict[str, str]]:
+) -> tuple[ort.InferenceSession, np.ndarray, dict[str, str]]:
     """Load ONNX session, embeddings, and labels lookup from a model directory.
 
     Returns:
@@ -106,7 +106,7 @@ def preprocess_image_url(url: str) -> np.ndarray:
 
 
 def run_inference(
-    session: "ort.InferenceSession",
+    session: ort.InferenceSession,
     image_tensor: np.ndarray,
     embeddings: np.ndarray,
     labels_lookup: dict[str, str],
@@ -132,7 +132,7 @@ def run_inference(
 
 def evaluate_snapshot(
     records: list[EvalObservation],
-    session: "ort.InferenceSession",
+    session: ort.InferenceSession,
     embeddings: np.ndarray,
     labels_lookup: dict[str, str],
     top_k: int = 5,
