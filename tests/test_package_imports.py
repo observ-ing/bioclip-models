@@ -12,7 +12,17 @@ import importlib
 
 import pytest
 
-_SUBMODULES = ["cli", "eval", "export", "gbif", "geo", "inat", "schema", "verify"]
+_SUBMODULES = [
+    "bundle",
+    "cli",
+    "eval",
+    "export",
+    "gbif",
+    "geo",
+    "inat",
+    "schema",
+    "verify",
+]
 
 
 @pytest.mark.parametrize("name", _SUBMODULES)

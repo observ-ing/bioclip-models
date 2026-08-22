@@ -11,7 +11,7 @@ The internal flow uses list[SpeciesRecord] instead of list[dict].
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,6 +30,31 @@ class SpeciesRecord(BaseModel):
     order: str | None = None
     family: str | None = None
     genus: str | None = None
+
+    def bundle_dump(self) -> dict[str, Any]:
+        """Alias-keyed dict of only the fields the runtime service reads.
+
+        Used for the copy of species_labels.json that goes into a release
+        tarball; see bioclip_models.bundle.
+        """
+        return self.model_dump(by_alias=True, include=set(BUNDLE_FIELDS))
+
+
+# Fields `SpeciesLabel` in observ-ing/core actually deserializes
+# (crates/observing-species-id/src/embeddings.rs). Everything else in
+# species_labels.json is parsed and thrown away on every cold start, so the
+# bundled copy carries only these.
+BUNDLE_FIELDS = ("scientific_name", "common_name", "kingdom")
+
+# The ranks a bundle-trimmed record loses. export.py needs them to build
+# BioCLIP's 7-rank taxonomic prompts, so a label set carrying none of them
+# still loads fine but would silently produce taxonomy-free prompts.
+TRIMMED_RANKS = ("phylum", "class_", "order", "family", "genus")
+
+
+def rank_aliases(ranks: tuple[str, ...]) -> list[str]:
+    """Field names as their on-disk JSON keys (`class_` -> `class`)."""
+    return [SpeciesRecord.model_fields[r].alias or r for r in ranks]
 
 
 # --- iNaturalist API response boundary ---

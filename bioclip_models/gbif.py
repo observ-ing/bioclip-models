@@ -24,7 +24,7 @@ import random
 import urllib.request
 from pathlib import Path
 
-from .schema import SpeciesRecord
+from .schema import TRIMMED_RANKS, SpeciesRecord, rank_aliases
 
 BACKBONE_URL = "https://hosted-datasets.gbif.org/datasets/backbone/current/simple.txt.gz"
 
@@ -178,8 +178,39 @@ def save_species_list(species_list: list[SpeciesRecord], path: Path) -> None:
     print(f"Saved {len(species_list)} species to {path}")
 
 
-def load_species_list(path: Path) -> list[SpeciesRecord]:
-    """Load species list from JSON, validating each record against SpeciesRecord."""
+def load_species_list(path: Path, *, require_taxonomy: bool = False) -> list[SpeciesRecord]:
+    """Load species list from JSON, validating each record against SpeciesRecord.
+
+    Set `require_taxonomy` when the list will be used to generate embeddings.
+    A bundle-trimmed labels file (scientificName/commonName/kingdom only, see
+    bundle.py) validates cleanly but carries no ranks for export.py to build
+    BioCLIP's 7-rank prompts from — the embeddings would come out quietly
+    degraded rather than failing. This turns that into a hard error.
+    """
     with open(path) as f:
         raw = json.load(f)
-    return [SpeciesRecord.model_validate(item) for item in raw]
+    records = [SpeciesRecord.model_validate(item) for item in raw]
+    if require_taxonomy:
+        _require_taxonomy(records, path)
+    return records
+
+
+def _require_taxonomy(records: list[SpeciesRecord], path: Path) -> None:
+    """Raise if no record in the set carries any of the trimmable ranks.
+
+    Checked across the whole set, not per record: real GBIF data has plenty of
+    species missing an individual rank, but a set where *nothing* has a phylum,
+    class, order, family or genus is a trimmed file, not sparse taxonomy.
+    """
+    if not records:
+        return
+    if any(getattr(rec, rank) for rec in records for rank in TRIMMED_RANKS):
+        return
+    raise ValueError(
+        f"{path} carries no taxonomy ranks ({', '.join(rank_aliases(TRIMMED_RANKS))}) "
+        f"across any of its {len(records)} records — this looks like a release "
+        "bundle's trimmed species_labels.json, which cannot generate BioCLIP's "
+        "taxonomic prompts. Use the pipeline's full output/species_labels.json, "
+        "or re-fetch with --rebuild-labels. Pass --allow-missing-taxonomy to "
+        "generate genus/epithet-only prompts anyway."
+    )
